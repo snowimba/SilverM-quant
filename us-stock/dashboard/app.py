@@ -310,9 +310,19 @@ def api_agent_analyze():
         return jsonify({'success': False, 'error': '缺少symbol参数'}), 400
 
     try:
-        sys.path.insert(0, str(PROJECT_ROOT.parent))
-        from agent_integration.api.analyzer import analyze_stock
-        result = analyze_stock(stock_symbol, trade_date)
+        # A股项目根目录必须在最前面，agent_integration 依赖其 database 模块
+        a_stock_root = str(PROJECT_ROOT.parent)
+        if a_stock_root not in sys.path:
+            sys.path.insert(0, a_stock_root)
+        # 临时切换工作目录，避免 database 模块冲突
+        import os
+        old_cwd = os.getcwd()
+        os.chdir(a_stock_root)
+        try:
+            from agent_integration.api.analyzer import analyze_stock
+            result = analyze_stock(stock_symbol, trade_date)
+        finally:
+            os.chdir(old_cwd)
 
         _analysis_history.insert(0, {
             'symbol': stock_symbol,
