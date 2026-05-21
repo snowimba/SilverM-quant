@@ -63,22 +63,26 @@ class ConfigAdapter:
     
     def get_llm_config(self, provider: str = None) -> Dict[str, Any]:
         """获取LLM配置
-        
+
         Args:
             provider: LLM提供商 (minimax/deepseek)
-            
+
         Returns:
             LLM配置字典
         """
         provider = provider or os.getenv('LLM_PROVIDER', 'deepseek')
-        
+
         if provider in self.DEFAULT_LLM_CONFIG:
             config = self.DEFAULT_LLM_CONFIG[provider].copy()
         else:
             config = self.DEFAULT_LLM_CONFIG['deepseek'].copy()
-        
+
         config['api_key'] = self._get_api_key(provider)
-        
+        config['base_url'] = os.environ.get(f'{provider.upper()}_BASE_URL')
+        model_override = os.environ.get('LLM_MODEL')
+        if model_override:
+            config['model'] = model_override
+
         return config
     
     def _get_api_key(self, provider: str) -> Optional[str]:

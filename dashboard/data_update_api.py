@@ -12,6 +12,7 @@ import duckdb
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.updaters.fetcher_dwd import DWDFetcher
+from database.db_manager import DatabaseManager
 
 data_update_bp = Blueprint('data_update', __name__, url_prefix='/api/data-update')
 
@@ -28,12 +29,20 @@ def get_log_path(date_str: str = None) -> str:
 update_tasks = {}
 
 
-def run_update_task(task_id: str, data_type: str, start_date: str = None, end_date: str = None, 
+def run_update_task(task_id: str, data_type: str, start_date: str = None, end_date: str = None,
                    ts_code: str = None, index_code: str = None, workers: int = 4, source: str = 'tushare'):
     """后台运行更新任务"""
     try:
         update_tasks[task_id] = {'status': 'running', 'progress': 0, 'message': '开始更新...'}
-        
+
+        # baostock 需要在当前线程重新登录（全局 socket 不是线程安全的）
+        if source == 'baostock':
+            import baostock as bs
+            from data.fetchers.baostock_adapter.base import BaostockBaseFetcher
+            BaostockBaseFetcher._logged_in = False
+            bs.login()
+            BaostockBaseFetcher._logged_in = True
+
         fetcher = DWDFetcher(source=source)
         result = None
         
@@ -42,23 +51,38 @@ def run_update_task(task_id: str, data_type: str, start_date: str = None, end_da
                 start_date = '20240101'
             if not end_date:
                 end_date = datetime.now().strftime('%Y%m%d')
-            result = fetcher.update_daily(start_date, end_date)
+            if source == 'baostock':
+                def on_progress(current, total):
+                    pct = int(current / total * 90)
+                    update_tasks[task_id] = {'status': 'running', 'progress': pct, 'message': f'下载日线数据 {current}/{total}...'}
+                result = fetcher.update_daily_by_stock(start_date, end_date, num_workers=workers, progress_callback=on_progress)
+            else:
+                result = fetcher.update_daily(start_date, end_date)
             
         elif data_type == 'daily_parallel':
             if not start_date:
                 start_date = '20240101'
             if not end_date:
                 end_date = datetime.now().strftime('%Y%m%d')
-            result = fetcher.update_daily_parallel(start_date, end_date, num_workers=workers)
+            if source == 'baostock':
+                result = fetcher.update_daily_by_stock(start_date, end_date, num_workers=1)
+            else:
+                result = fetcher.update_daily_parallel(start_date, end_date, num_workers=workers)
             
         elif data_type == 'daily_basic':
+            if source == 'baostock':
+                update_tasks[task_id] = {'status': 'error', 'message': 'daily_basic 仅支持 tushare 数据源，请切换到 Tushare 或配置 TUSHARE_TOKEN'}
+                return
             if not start_date:
                 start_date = '20240101'
             if not end_date:
                 end_date = datetime.now().strftime('%Y%m%d')
             result = fetcher.update_daily_basic(start_date, end_date)
-            
+
         elif data_type == 'adj_factor':
+            if source == 'baostock':
+                update_tasks[task_id] = {'status': 'error', 'message': 'adj_factor 仅支持 tushare 数据源，请切换到 Tushare 或配置 TUSHARE_TOKEN'}
+                return
             if not start_date:
                 start_date = '20200101'
             if not end_date:
@@ -102,6 +126,9 @@ def run_update_task(task_id: str, data_type: str, start_date: str = None, end_da
             result = fetcher.update_stock_info(source=source)
             
         elif data_type == 'trade_calendar':
+            if source == 'baostock':
+                update_tasks[task_id] = {'status': 'error', 'message': 'trade_calendar 仅支持 tushare 数据源，请切换到 Tushare 或配置 TUSHARE_TOKEN'}
+                return
             if not start_date:
                 start_date = '20200101'
             if not end_date:
@@ -114,55 +141,72 @@ def run_update_task(task_id: str, data_type: str, start_date: str = None, end_da
                 start_date = '20240101'
             if not end_date:
                 end_date = datetime.now().strftime('%Y%m%d')
-            
+
             total_records = 0
             results = {}
-            
-            # 1. 交易日历
-            update_tasks[task_id] = {'status': 'running', 'progress': 10, 'message': '更新交易日历...'}
-            r = fetcher.update_trade_calendar(start_date, end_date)
-            results['trade_calendar'] = r
-            total_records += r.get('records', 0)
-            
-            # 2. 股票信息
-            update_tasks[task_id] = {'status': 'running', 'progress': 20, 'message': '更新股票信息...'}
-            r = fetcher.update_stock_info()
-            results['stock_info'] = r
-            total_records += r.get('records', 0)
-            
-            # 3. 日线数据
-            update_tasks[task_id] = {'status': 'running', 'progress': 40, 'message': '更新日线数据...'}
-            r = fetcher.update_daily(start_date, end_date)
-            results['daily'] = r
-            total_records += r.get('records', 0)
-            
-            # 4. 每日指标
-            update_tasks[task_id] = {'status': 'running', 'progress': 60, 'message': '更新每日指标...'}
-            r = fetcher.update_daily_basic(start_date, end_date)
-            results['daily_basic'] = r
-            total_records += r.get('records', 0)
-            
-            # 5. 复权因子
-            update_tasks[task_id] = {'status': 'running', 'progress': 70, 'message': '更新复权因子...'}
-            r = fetcher.update_adj_factor(start_date, end_date)
-            results['adj_factor'] = r
-            total_records += r.get('records', 0)
-            
-            # 6. 指数数据
-            update_tasks[task_id] = {'status': 'running', 'progress': 80, 'message': '更新指数数据...'}
-            idx_records = 0
-            for idx in fetcher.DEFAULT_INDICES:
-                r = fetcher.update_index(idx, start_date, end_date)
-                idx_records += r.get('records', 0)
-            results['index'] = {'records': idx_records}
-            total_records += idx_records
-            
-            # 7. 财务数据
-            update_tasks[task_id] = {'status': 'running', 'progress': 90, 'message': '更新财务数据...'}
-            r = fetcher.update_financial_multiprocess(num_workers=workers)
-            results['financial'] = r
-            total_records += r.get('income_records', 0) + r.get('balancesheet_records', 0) + r.get('cashflow_records', 0)
-            
+
+            if source == 'baostock':
+                # baostock 模式：只更新支持的数据
+                # 1. 股票信息
+                update_tasks[task_id] = {'status': 'running', 'progress': 20, 'message': '更新股票信息(baostock)...'}
+                r = fetcher.update_stock_info(source='baostock')
+                results['stock_info'] = r
+                total_records += r.get('records', 0)
+
+                # 2. 日线数据
+                update_tasks[task_id] = {'status': 'running', 'progress': 50, 'message': '更新日线数据(baostock)...'}
+                r = fetcher.update_daily_by_stock(start_date, end_date, num_workers=1)
+                results['daily'] = r
+                total_records += r.get('records', 0)
+
+                results['skipped'] = ['trade_calendar', 'daily_basic', 'adj_factor', 'index', 'financial']
+            else:
+                # tushare 模式：全量更新
+                # 1. 交易日历
+                update_tasks[task_id] = {'status': 'running', 'progress': 10, 'message': '更新交易日历...'}
+                r = fetcher.update_trade_calendar(start_date, end_date)
+                results['trade_calendar'] = r
+                total_records += r.get('records', 0)
+
+                # 2. 股票信息
+                update_tasks[task_id] = {'status': 'running', 'progress': 20, 'message': '更新股票信息...'}
+                r = fetcher.update_stock_info()
+                results['stock_info'] = r
+                total_records += r.get('records', 0)
+
+                # 3. 日线数据
+                update_tasks[task_id] = {'status': 'running', 'progress': 40, 'message': '更新日线数据...'}
+                r = fetcher.update_daily(start_date, end_date)
+                results['daily'] = r
+                total_records += r.get('records', 0)
+
+                # 4. 每日指标
+                update_tasks[task_id] = {'status': 'running', 'progress': 60, 'message': '更新每日指标...'}
+                r = fetcher.update_daily_basic(start_date, end_date)
+                results['daily_basic'] = r
+                total_records += r.get('records', 0)
+
+                # 5. 复权因子
+                update_tasks[task_id] = {'status': 'running', 'progress': 70, 'message': '更新复权因子...'}
+                r = fetcher.update_adj_factor(start_date, end_date)
+                results['adj_factor'] = r
+                total_records += r.get('records', 0)
+
+                # 6. 指数数据
+                update_tasks[task_id] = {'status': 'running', 'progress': 80, 'message': '更新指数数据...'}
+                idx_records = 0
+                for idx in fetcher.DEFAULT_INDICES:
+                    r = fetcher.update_index(idx, start_date, end_date)
+                    idx_records += r.get('records', 0)
+                results['index'] = {'records': idx_records}
+                total_records += idx_records
+
+                # 7. 财务数据
+                update_tasks[task_id] = {'status': 'running', 'progress': 90, 'message': '更新财务数据...'}
+                r = fetcher.update_financial_multiprocess(num_workers=workers)
+                results['financial'] = r
+                total_records += r.get('income_records', 0) + r.get('balancesheet_records', 0) + r.get('cashflow_records', 0)
+
             result = {'records': total_records, 'results': results}
         
         update_tasks[task_id] = {
@@ -190,7 +234,7 @@ def get_status():
         fetcher = DWDFetcher()
         
         # 获取各表的最新日期和记录数
-        db = duckdb.connect(fetcher.db_path)
+        db = DatabaseManager(fetcher.db_path).conn.cursor()
         try:
             tables_status = {}
             
@@ -365,7 +409,7 @@ def get_table_calendar(table_name):
         date_col = date_col_map.get(table_name, 'trade_date')
         
         fetcher = DWDFetcher()
-        db = duckdb.connect(fetcher.db_path)
+        db = DatabaseManager(fetcher.db_path).conn.cursor()
         
         try:
             result = db.execute(f"""
@@ -421,6 +465,84 @@ def get_table_calendar(table_name):
             })
         finally:
             db.close()
-            
+
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@data_update_bp.route('/scan-signals', methods=['POST'])
+def trigger_scan_signals():
+    """触发信号扫描"""
+    try:
+        data = request.get_json() or {}
+        date = data.get('date')
+        workers = data.get('workers', 4)
+
+        task_id = f"scan_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        update_tasks[task_id] = {'status': 'pending', 'progress': 0, 'message': '准备扫描信号...'}
+
+        thread = threading.Thread(
+            target=run_scan_signals_task,
+            args=(task_id, date, workers)
+        )
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({'success': True, 'task_id': task_id, 'message': '信号扫描已启动'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def run_scan_signals_task(task_id: str, date: str = None, workers: int = 4):
+    """后台运行信号扫描（通过子进程，临时释放DB锁）"""
+    try:
+        update_tasks[task_id] = {'status': 'running', 'progress': 10, 'message': '正在扫描全市场信号...'}
+
+        # 临时关闭主进程的 DB 连接，让子进程能访问
+        from database.db_manager import DatabaseManager
+        db_mgr = DatabaseManager()
+        db_mgr.conn.close()
+
+        import subprocess
+        cmd = ['python', 'signals/scan_signals_v2.py', '--workers', str(workers)]
+        if date:
+            cmd.extend(['--date', date])
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=600,
+            cwd=PROJECT_ROOT
+        )
+
+        # 重新打开 DB 连接
+        import duckdb
+        db_mgr.conn = duckdb.connect(str(db_mgr.db_path))
+
+        if result.returncode == 0:
+            output = result.stdout + result.stderr
+            import re
+            m = re.search(r'成功[：:]\s*(\d+)', output)
+            success_count = m.group(1) if m else '?'
+            update_tasks[task_id] = {
+                'status': 'completed',
+                'progress': 100,
+                'message': f'扫描完成: {success_count} 只股票'
+            }
+        else:
+            update_tasks[task_id] = {
+                'status': 'error',
+                'progress': 0,
+                'message': f'扫描失败: {result.stderr[-200:] if result.stderr else "未知错误"}'
+            }
+    except subprocess.TimeoutExpired:
+        update_tasks[task_id] = {
+            'status': 'error',
+            'progress': 0,
+            'message': '扫描超时（超过10分钟）'
+        }
+    except Exception as e:
+        update_tasks[task_id] = {
+            'status': 'error',
+            'progress': 0,
+            'message': f'扫描失败: {str(e)}'
+        }

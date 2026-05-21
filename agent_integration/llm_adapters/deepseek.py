@@ -1,6 +1,7 @@
 """
 DeepSeek LLM适配器 - ChatDeepSeek模型适配器实现
 """
+import os
 import requests
 from typing import ClassVar
 from agent_integration.llm_adapters.base import OpenAICompatibleBase
@@ -9,10 +10,10 @@ from agent_integration.llm_adapters.base import OpenAICompatibleBase
 class ChatDeepSeek(OpenAICompatibleBase):
     provider_name: ClassVar[str] = "deepseek"
     default_model: ClassVar[str] = "deepseek-chat"
-    api_base: ClassVar[str] = "https://api.deepseek.com/v1"
+    api_base: ClassVar[str] = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 
     def __init__(self, api_key: str = None, model: str = None, **kwargs):
-        base_url = kwargs.pop('base_url', None)
+        base_url = kwargs.pop('base_url', None) or os.environ.get("DEEPSEEK_BASE_URL")
         super().__init__(
             model=model,
             api_key=api_key,

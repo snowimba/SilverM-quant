@@ -35,6 +35,7 @@ class TemplateStrategy(BaseStrategy):
         ('threshold', 8.0),
         ('stop_loss_pct', 0.03),
         ('多空线缓冲', True),
+        ('max_positions', 10),
     )
 
     def __init__(self):

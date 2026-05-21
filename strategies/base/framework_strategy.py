@@ -44,6 +44,7 @@ class BaseStrategy(bt.Strategy):
         ('stop_loss_pct', 0.05), # 止损比例
         ('min_data_points', 60),  # 最少数据点数
         ('debug_mode', False),    # 调试模式
+        ('max_positions', 10),    # 最大持仓数
     )
     
     # 节假日列表（与天宫B1/B2策略相同）
@@ -88,18 +89,21 @@ class BaseStrategy(bt.Strategy):
         """初始化跟踪变量"""
         self.entry_price = None
         self.order = None
-        
+
         self.pending_buy_signal = False
         self.pending_buy_reason = ""
         self.pending_buy_date = None
-        
+
         self.pending_sell_signal = False
         self.pending_sell_reason = ""
-        
+
         self.trade_records = []
-        
+
         self.prev_k = None
         self.prev_d = None
+
+        self.daily_values = []
+        self.daily_dates = []
         
     def _init_indicators(self):
         """初始化指标缓存，子类可重写"""
@@ -314,9 +318,12 @@ class BaseStrategy(bt.Strategy):
     
     def next(self):
         """主循环，每根K线执行一次"""
+        self.daily_values.append(self.broker.getvalue())
+        self.daily_dates.append(self.datas[0].datetime.datetime(0))
+
         if not self.time_filter():
             return
-        
+
         if not self.position:
             if self.buy_condition():
                 self._execute_buy()
@@ -388,6 +395,12 @@ class BaseStrategy(bt.Strategy):
     def get_trade_records(self) -> List[Dict]:
         """获取交易记录"""
         return self.trade_records
+
+    def get_daily_values(self) -> list:
+        return self.daily_values
+
+    def get_daily_dates(self) -> list:
+        return self.daily_dates
 
     # =========================================
     # S1评分计算 - 卖出信号评分

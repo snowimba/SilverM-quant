@@ -138,6 +138,7 @@ class BaostockDailyPriceFetcher(BaostockBaseFetcher):
         df = df.rename(columns={
             'date': 'trade_date',
             'pctChg': 'pct_chg',
+            'volume': 'vol',
         })
         
         # 转换代码格式: sz.300486 → 300486.SZ
@@ -147,14 +148,14 @@ class BaostockDailyPriceFetcher(BaostockBaseFetcher):
         df['data_source'] = f'baostock_{adjustflag}'
         
         # 确保数值类型
-        numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg']
+        numeric_cols = ['open', 'high', 'low', 'close', 'vol', 'amount', 'pct_chg']
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
         # 选择需要的列并按日期排序
-        result_cols = ['ts_code', 'trade_date', 'open', 'high', 'low', 'close', 
-                       'volume', 'amount', 'pct_chg', 'data_source']
+        result_cols = ['ts_code', 'trade_date', 'open', 'high', 'low', 'close',
+                       'vol', 'amount', 'pct_chg', 'data_source']
         result_cols = [c for c in result_cols if c in df.columns]
         
         if len(df) > 0:
@@ -166,5 +167,5 @@ class BaostockDailyPriceFetcher(BaostockBaseFetcher):
         """返回空DataFrame"""
         return pd.DataFrame(columns=[
             'ts_code', 'trade_date', 'open', 'high', 'low', 'close',
-            'volume', 'amount', 'pct_chg', 'data_source'
+            'vol', 'amount', 'pct_chg', 'data_source'
         ])

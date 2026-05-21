@@ -33,6 +33,10 @@ app.register_blueprint(backtest_bp)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'Astock3.duckdb')
 
+# 使用 DatabaseManager 单例，避免 DuckDB 多连接配置冲突
+from database.db_manager import DatabaseManager
+_db_manager = DatabaseManager(DB_PATH)
+
 # 策略ID到中文名称映射
 STRATEGY_NAME_MAP = {
     'b1': 'B1策略',
@@ -51,7 +55,7 @@ SELL_STRATEGY_NAME_MAP = {
 }
 
 def get_db():
-    return duckdb.connect(DB_PATH, read_only=True)
+    return _db_manager.conn.cursor()
 
 def get_latest_trading_date():
     db = get_db()
@@ -675,9 +679,8 @@ def api_multi_signal_resonance():
     """获取多信号共振股票"""
     date_str = request.args.get('date')
     if not date_str:
-        # 默认前一天
-        date_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    
+        date_str = get_latest_trading_date()
+
     db = get_db()
     try:
         result = db.execute("""

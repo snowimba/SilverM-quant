@@ -71,6 +71,51 @@ from scripts.log_utils import setup_logger
 logger = setup_logger('fetcher_dwd', 'pipeline')
 
 
+# 模块级 worker 函数，用于多进程下载 baostock 日线数据
+# 每个子进程独立 login，避免 socket 冲突
+_bs_worker_logged_in = False
+
+def _baostock_fetch_worker(args):
+    """多进程 worker：独立 baostock session 下载单只股票日线"""
+    global _bs_worker_logged_in
+    import baostock as bs
+
+    code, start_date, end_date = args
+
+    if not _bs_worker_logged_in:
+        bs.login()
+        _bs_worker_logged_in = True
+
+    try:
+        from data.fetchers.baostock_adapter.code_converter import convert_code_to_baostock, convert_code_from_baostock
+        bs_code = convert_code_to_baostock(code)
+        start_str = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}" if len(start_date) == 8 else start_date
+        end_str = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}" if len(end_date) == 8 else end_date
+
+        rs = bs.query_history_k_data_plus(
+            bs_code,
+            'date,code,open,high,low,close,volume,amount,pctChg',
+            start_date=start_str,
+            end_date=end_str,
+            frequency='d',
+            adjustflag='3'
+        )
+
+        if rs.error_code != '0':
+            return {'success': 0, 'fail': 1, 'records': 0, 'data': None, 'code': code}
+
+        data_list = []
+        while rs.next():
+            data_list.append(rs.get_row_data())
+
+        if not data_list:
+            return {'success': 0, 'fail': 1, 'records': 0, 'data': None, 'code': code}
+
+        return {'success': 1, 'fail': 0, 'records': len(data_list), 'data': data_list, 'code': code}
+    except Exception as e:
+        return {'success': 0, 'fail': 1, 'records': 0, 'data': None, 'code': code}
+
+
 def _process_stock_financial(code: str) -> Dict[str, Any]:
     """模块级worker函数: 处理单只股票的财务数据"""
     ts_code = to_tushare(code)
@@ -295,7 +340,20 @@ class DWDFetcher:
         try:
             db.execute("CREATE TEMPORARY TABLE temp_data AS SELECT * FROM df")
             cols = ', '.join(df.columns)
-            db.execute(f"INSERT OR REPLACE INTO {table} ({cols}) SELECT {cols} FROM temp_data")
+            # 先删除已存在的记录再插入，避免多 UNIQUE 约束冲突
+            pk_map = {
+                'dwd_daily_price': ('trade_date', 'ts_code'),
+                'dwd_stock_info': ('ts_code',),
+                'dwd_daily_basic': ('trade_date', 'ts_code'),
+                'dwd_index_daily': ('index_code', 'trade_date'),
+                'dwd_trade_calendar': ('trade_date', 'exchange'),
+                'dwd_adj_factor': ('ts_code', 'trade_date'),
+            }
+            pk_cols = pk_map.get(table)
+            if pk_cols and all(c in df.columns for c in pk_cols):
+                join_cond = ' AND '.join([f"{table}.{c} = temp_data.{c}" for c in pk_cols])
+                db.execute(f"DELETE FROM {table} WHERE EXISTS (SELECT 1 FROM temp_data WHERE {join_cond})")
+            db.execute(f"INSERT INTO {table} ({cols}) SELECT {cols} FROM temp_data")
             db.execute("DROP TABLE temp_data")
             return len(df)
         finally:
@@ -430,7 +488,7 @@ class DWDFetcher:
             'elapsed': elapsed
         }
     
-    def update_daily_by_stock(self, start_date: str, end_date: str, num_workers: int = 4) -> Dict[str, Any]:
+    def update_daily_by_stock(self, start_date: str, end_date: str, num_workers: int = 4, progress_callback=None) -> Dict[str, Any]:
         """
         使用baostock按股票下载模式更新日线数据
         
@@ -459,48 +517,53 @@ class DWDFetcher:
         
         total_stocks = len(stock_list)
         logger.info(f"共 {total_stocks} 只股票")
-        
-        def fetch_single_stock(code: str) -> Dict[str, Any]:
-            """Worker函数: 获取单只股票日线数据"""
-            try:
-                df = self.daily_fetcher.fetch_by_code(code, start_date, end_date)
-                if df is not None and not df.empty:
-                    return {'success': 1, 'fail': 0, 'records': len(df), 'df': df, 'code': code}
-                return {'success': 0, 'fail': 1, 'records': 0, 'df': None, 'code': code}
-            except Exception as e:
-                logger.error(f"获取日线失败 {code}: {e}")
-                return {'success': 0, 'fail': 1, 'records': 0, 'df': None, 'code': code}
-        
-        effective_workers = min(num_workers, cpu_count() - 1 or 1)
+
+        effective_workers = min(num_workers, 8)
         logger.info(f"使用 {effective_workers} 个并行进程")
-        
+
         all_dfs = []
         success_count = 0
         fail_count = 0
         total_records = 0
-        
+        BATCH_SIZE = 50
+
+        # 构造参数列表给模块级 worker
+        worker_args = [(code, start_date, end_date) for code in stock_list]
+
+        from data.fetchers.baostock_adapter.code_converter import convert_code_from_baostock
+
         with Pool(processes=effective_workers) as pool:
-            results = list(tqdm(
-                pool.imap(fetch_single_stock, stock_list),
-                total=total_stocks,
-                desc="按股票更新日线",
-                unit="股"
-            ))
-        
-        for result in results:
-            if result['success']:
-                success_count += 1
-                total_records += result['records']
-                if result['df'] is not None:
-                    all_dfs.append(result['df'])
-            else:
-                fail_count += 1
-        
+            for i, result in enumerate(pool.imap(_baostock_fetch_worker, worker_args)):
+                if result['success']:
+                    success_count += 1
+                    total_records += result['records']
+                    if result['data']:
+                        df = pd.DataFrame(result['data'],
+                            columns=['trade_date', 'code', 'open', 'high', 'low', 'close', 'vol', 'amount', 'pct_chg'])
+                        df['ts_code'] = df['code'].apply(convert_code_from_baostock)
+                        df['data_source'] = 'baostock'
+                        for col in ['open', 'high', 'low', 'close', 'vol', 'amount', 'pct_chg']:
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                        df = df[['ts_code', 'trade_date', 'open', 'high', 'low', 'close', 'vol', 'amount', 'pct_chg', 'data_source']]
+                        all_dfs.append(df)
+                else:
+                    fail_count += 1
+
+                if (i + 1) % 50 == 0:
+                    logger.info(f"按股票更新日线进度: {i+1}/{total_stocks}")
+                    if progress_callback:
+                        progress_callback(i + 1, total_stocks)
+                if (i + 1) % BATCH_SIZE == 0 and all_dfs:
+                    logger.info(f"批量写入 {len(all_dfs)} 只股票数据到数据库...")
+                    combined_df = pd.concat(all_dfs, ignore_index=True)
+                    self._save_to_db(combined_df, 'dwd_daily_price')
+                    all_dfs = []
+
         if all_dfs:
-            logger.info(f"准备写入 {len(all_dfs)} 个DataFrame到数据库...")
+            logger.info(f"写入剩余 {len(all_dfs)} 只股票数据到数据库...")
             combined_df = pd.concat(all_dfs, ignore_index=True)
             self._save_to_db(combined_df, 'dwd_daily_price')
-        
+
         elapsed = time.time() - start_time
         logger.info(f"按股票更新日线完成: 成功{success_count}只, 失败{fail_count}只, 记录{total_records}条, 耗时{elapsed:.1f}秒")
         

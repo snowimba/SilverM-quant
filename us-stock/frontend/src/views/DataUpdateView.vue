@@ -38,14 +38,9 @@ const tableNames: Record<string, string> = {
 }
 
 const updateTypes = [
-  { value: 'all', label: '全量更新', desc: '更新所有数据表' },
-  { value: 'daily', label: '日线数据', desc: '日线行情数据' },
-  { value: 'daily_basic', label: '每日指标', desc: 'PE、PB等每日指标' },
-  { value: 'adj_factor', label: '复权因子', desc: '复权因子数据' },
-  { value: 'index', label: '指数数据', desc: '沪深指数日线数据' },
-  { value: 'stock_info', label: '股票信息', desc: '股票基础信息' },
-  { value: 'trade_calendar', label: '交易日历', desc: '交易日历' },
-  { value: 'financial', label: '财务数据', desc: '财报数据(多进程)' }
+  { value: 'all', label: '全量更新', desc: '股票列表 + 日线数据' },
+  { value: 'daily', label: '日线数据', desc: 'Yahoo Finance OHLCV' },
+  { value: 'stock_info', label: '股票列表', desc: 'NYSE + NASDAQ 全部股票' },
 ]
 
 const fetchStatus = async () => {
@@ -171,9 +166,9 @@ onMounted(() => {
   <div class="min-h-screen" style="background: #0f1419; color: #e7e9ea;">
     <!-- Header -->
     <header class="header">
-      <h1>📊 数据更新中心</h1>
+      <h1>📊 美股数据更新中心</h1>
       <nav class="nav">
-        <router-link to="/">持仓</router-link>
+        <router-link to="/">首页</router-link>
         <router-link to="/agent">分析</router-link>
         <router-link to="/signals">信号</router-link>
         <router-link to="/data-update" class="active">数据更新</router-link>
@@ -222,13 +217,9 @@ onMounted(() => {
       <div class="card">
         <div class="card-header">
           <h2 class="card-title">⚡ 触发数据更新</h2>
-          <div class="source-switch">
-            <span :class="{ active: currentSource === 'tushare' }">Tushare</span>
-            <div :class="['switch', currentSource]" @click="toggleSource"></div>
-            <span :class="{ active: currentSource === 'baostock' }">Baostock</span>
-          </div>
+          <span style="color:#8b98a5;font-size:13px;">数据源: Yahoo Finance</span>
         </div>
-        
+
         <div class="form-section">
           <div class="form-group">
             <h3>📌 选择数据表</h3>

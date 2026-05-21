@@ -20,15 +20,15 @@ def create_llm_with_fallback():
     try:
         from agent_integration.llm_adapters.factory import create_llm_by_provider
         from agent_integration.adapters.config_adapter import ConfigAdapter
-        
+
         config = ConfigAdapter()
-        llm_config = config.get_llm_config(provider='minimax')
-        
+        llm_config = config.get_llm_config()
+
         llm = create_llm_by_provider(
-            provider=llm_config.get('provider', 'minimax'),
-            model=llm_config.get('model', 'M2'),
+            provider=llm_config.get('provider', 'deepseek'),
+            model=llm_config.get('model', 'deepseek-chat'),
             api_key=llm_config.get('api_key'),
-            group_id=llm_config.get('group_id'),
+            base_url=llm_config.get('base_url'),
         )
         return llm
     except Exception as e:
