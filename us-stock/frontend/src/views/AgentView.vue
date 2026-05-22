@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { marked } from 'marked'
+
+marked.setOptions({ breaks: true, gfm: true })
+
+const renderMd = (text: string | undefined) => {
+  if (!text) return '-'
+  return marked(text) as string
+}
 
 interface AnalysisResult {
   symbol: string
@@ -497,7 +505,7 @@ const getDebaterTitle = (type: string) => {
             class="bg-slate-800/20 rounded-lg p-4 text-slate-300 text-sm leading-relaxed"
             :class="{ 'max-h-32 overflow-hidden': !researchExpanded && result.research.reasoning?.length > 200 }"
           >
-            <p class="whitespace-pre-wrap">{{ result.research.reasoning || '-' }}</p>
+            <div class="prose prose-invert prose-sm max-w-none" v-html="renderMd(result.research.reasoning)"></div>
           </div>
           <button 
             v-if="!researchExpanded && result.research.reasoning?.length > 200"
@@ -566,7 +574,7 @@ const getDebaterTitle = (type: string) => {
             多头研究 Bull Research
           </h3>
           <div class="bg-slate-800/30 rounded-lg p-4 min-h-[120px]">
-            <p class="text-slate-300 leading-relaxed whitespace-pre-wrap">{{ result.bull_research || '-' }}</p>
+            <div class="text-slate-300 leading-relaxed prose prose-invert prose-sm max-w-none" v-html="renderMd(result.bull_research)"></div>
           </div>
         </div>
         <div class="glass-card p-6 research-bear animate-fade-in" style="animation-delay: 0.45s">
@@ -577,7 +585,7 @@ const getDebaterTitle = (type: string) => {
             空头研究 Bear Research
           </h3>
           <div class="bg-slate-800/30 rounded-lg p-4 min-h-[120px]">
-            <p class="text-slate-300 leading-relaxed whitespace-pre-wrap">{{ result.bear_research || '-' }}</p>
+            <div class="text-slate-300 leading-relaxed prose prose-invert prose-sm max-w-none" v-html="renderMd(result.bear_research)"></div>
           </div>
         </div>
       </div>
@@ -620,6 +628,29 @@ const getDebaterTitle = (type: string) => {
 </template>
 
 <style scoped>
+.prose {
+  color: #cbd5e1;
+  line-height: 1.75;
+}
+.prose :deep(h1), .prose :deep(h2), .prose :deep(h3) {
+  color: #f1f5f9;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+.prose :deep(h2) { font-size: 1.1em; }
+.prose :deep(h3) { font-size: 1em; }
+.prose :deep(p) { margin-bottom: 0.75em; }
+.prose :deep(ul), .prose :deep(ol) { padding-left: 1.5em; margin-bottom: 0.75em; }
+.prose :deep(li) { margin-bottom: 0.25em; }
+.prose :deep(strong) { color: #f1f5f9; }
+.prose :deep(blockquote) { border-left: 3px solid #475569; padding-left: 1em; color: #94a3b8; margin: 0.75em 0; }
+.prose :deep(code) { background: #1e293b; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+.prose :deep(hr) { border-color: #334155; margin: 1em 0; }
+.prose :deep(table) { width: 100%; border-collapse: collapse; margin: 0.75em 0; }
+.prose :deep(th), .prose :deep(td) { border: 1px solid #334155; padding: 0.4em 0.8em; text-align: left; }
+.prose :deep(th) { background: #1e293b; }
+
 .glass-card {
   background: rgba(30, 41, 59, 0.8);
   backdrop-filter: blur(10px);
