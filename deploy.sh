@@ -20,7 +20,6 @@ set -e
 REPO_URL="git@github.com:snowimba/SilverM-quant.git"
 BRANCH="feature/us-stock-and-fixes"
 DEPLOY_DIR="/opt/silverm-quant"
-PYTHON_VERSION="3.11"
 NODE_VERSION="20"
 
 # LLM 配置 (本地 proxy)
@@ -46,7 +45,7 @@ err() { echo -e "${RED}[$(date '+%H:%M:%S')] ERROR:${NC} $1"; exit 1; }
 log "安装系统依赖..."
 sudo apt-get update -qq
 sudo apt-get install -y -qq \
-    python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
+    python3 python3-venv python3-dev python3-pip \
     git curl build-essential
 
 # 安装 Node.js (用于构建前端)
@@ -56,7 +55,7 @@ if ! command -v node &>/dev/null; then
     sudo apt-get install -y -qq nodejs
 fi
 
-log "Python: $(python${PYTHON_VERSION} --version)"
+log "Python: $(python3 --version)"
 log "Node: $(node --version)"
 log "npm: $(npm --version)"
 
@@ -78,7 +77,7 @@ fi
 # ==================== 3. Python 虚拟环境 ====================
 log "创建 Python 虚拟环境..."
 if [ ! -d ".venv" ]; then
-    python${PYTHON_VERSION} -m venv .venv
+    python3 -m venv .venv
 fi
 source .venv/bin/activate
 
