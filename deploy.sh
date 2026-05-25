@@ -17,7 +17,7 @@
 set -e
 
 # ==================== 配置区 ====================
-REPO_URL="git@github.com:snowimba/SilverM-quant.git"
+REPO_URL="https://github.com/snowimba/SilverM-quant.git"
 BRANCH="feature/us-stock-and-fixes"
 DEPLOY_DIR="/opt/silverm-quant"
 NODE_VERSION="20"
